@@ -40,15 +40,19 @@ import com.google.api.client.http.HttpResponse;
 import com.google.api.client.http.HttpStatusCodes;
 import com.google.api.client.json.JsonObjectParser;
 import com.google.api.client.util.GenericData;
+import com.google.api.client.util.Joiner;
 import com.google.auth.ServiceAccountSigner;
 import com.google.auth.http.HttpTransportFactory;
 import com.google.common.annotations.Beta;
 import com.google.common.base.MoreObjects;
+import com.google.common.collect.ImmutableSet;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.ObjectInputStream;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
@@ -94,6 +98,8 @@ public class ComputeEngineCredentials extends GoogleCredentials
 
   private final String transportFactoryClassName;
 
+  private final Collection<String> scopes;
+
   private transient HttpTransportFactory transportFactory;
   private transient String serviceAccountEmail;
 
@@ -103,12 +109,23 @@ public class ComputeEngineCredentials extends GoogleCredentials
    * @param transportFactory HTTP transport factory, creates the transport used to get access
    *     tokens.
    */
-  private ComputeEngineCredentials(HttpTransportFactory transportFactory) {
+  private ComputeEngineCredentials(HttpTransportFactory transportFactory, Collection<String> scopes) {
     this.transportFactory =
         firstNonNull(
             transportFactory,
             getFromServiceLoader(HttpTransportFactory.class, OAuth2Utils.HTTP_TRANSPORT_FACTORY));
     this.transportFactoryClassName = this.transportFactory.getClass().getName();
+    this.scopes = (scopes == null) ? null : ImmutableSet.copyOf(scopes);
+  }
+
+  /**
+   * Clones the compute engine account with the specified scopes.
+   *
+   * <p>Should be called before use for instances with empty scopes.
+   */
+  @Override
+  public GoogleCredentials createScoped(Collection<String> newScopes) {
+    return new ComputeEngineCredentials(this.transportFactory, newScopes);
   }
 
   /**
@@ -117,13 +134,25 @@ public class ComputeEngineCredentials extends GoogleCredentials
    * @return new ComputeEngineCredentials
    */
   public static ComputeEngineCredentials create() {
-    return new ComputeEngineCredentials(null);
+    return new ComputeEngineCredentials(null, null);
+  }
+
+  public final Collection<String> getScopes() {
+    return scopes;
+  }
+
+  private String createTokenUrlWithScopes() {
+    GenericUrl tokenUrl = new GenericUrl(getTokenServerEncodedUrl());
+    if (scopes != null) {
+      tokenUrl.set("scopes", Joiner.on(',').join(scopes));
+    }
+    return tokenUrl.toString();
   }
 
   /** Refresh the access token by getting it from the GCE metadata server */
   @Override
   public AccessToken refreshAccessToken() throws IOException {
-    HttpResponse response = getMetadataResponse(getTokenServerEncodedUrl());
+    HttpResponse response = getMetadataResponse(createTokenUrlWithScopes());
     int statusCode = response.getStatusCode();
     if (statusCode == HttpStatusCodes.STATUS_CODE_NOT_FOUND) {
       throw new IOException(
@@ -307,7 +336,8 @@ public class ComputeEngineCredentials extends GoogleCredentials
       return false;
     }
     ComputeEngineCredentials other = (ComputeEngineCredentials) obj;
-    return Objects.equals(this.transportFactoryClassName, other.transportFactoryClassName);
+    return Objects.equals(this.transportFactoryClassName, other.transportFactoryClassName)
+      && Objects.equals(this.scopes, other.scopes);
   }
 
   private void readObject(ObjectInputStream input) throws IOException, ClassNotFoundException {
@@ -399,11 +429,13 @@ public class ComputeEngineCredentials extends GoogleCredentials
 
   public static class Builder extends GoogleCredentials.Builder {
     private HttpTransportFactory transportFactory;
+    private Collection<String> scopes = null;
 
     protected Builder() {}
 
     protected Builder(ComputeEngineCredentials credentials) {
       this.transportFactory = credentials.transportFactory;
+      this.scopes = credentials.scopes;
     }
 
     public Builder setHttpTransportFactory(HttpTransportFactory transportFactory) {
@@ -411,12 +443,21 @@ public class ComputeEngineCredentials extends GoogleCredentials
       return this;
     }
 
+    public Builder setScopes(Collection<String> scopes) {
+      this.scopes = scopes;
+      return this;
+    }
+
     public HttpTransportFactory getHttpTransportFactory() {
       return transportFactory;
     }
 
+    public Collection<String> getScopes() {
+      return scopes;
+    }
+
     public ComputeEngineCredentials build() {
-      return new ComputeEngineCredentials(transportFactory);
+      return new ComputeEngineCredentials(transportFactory, scopes);
     }
   }
 }
